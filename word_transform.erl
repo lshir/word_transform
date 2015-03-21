@@ -1,6 +1,25 @@
 -module(word_transform).
 -compile(export_all).
 
+
+% Will start the judge, which keeps track of matches and the success of the search
+%
+% search(StartWord, TargetWord, Dictionary) ->
+  
+judge(_Start, _Target, Match, [], _Dictionary) ->
+  {found, Match};
+judge(_Start, _Target, _Match, Paths,  []) -> {failure};
+judge(Start, Target, Match, Paths, Dictionary) -> % first call
+  {Status, PathsNew} = search_neighbors([Start], Target, Dictionary),
+  case Status of
+    found -> {found, PathsNew}; % @todo need to update to BEST path
+    dead -> {dead};
+    notfound -> "do some stuff to iterate"
+  end.
+
+
+
+
 % Reads in the file as a path and returns the words in a list.
 % @todo for the success of our search, we need to check that the target is in the dictionary
 read_dictionary(File) ->
@@ -28,7 +47,8 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
     false when Neighbors =:= [] -> 
       {dead, CurrentPath};
     false ->
-      {notfound}
+      NewPaths = [[H] ++ T || H <- Neighbors, T <- [CurrentPath]],
+      {notfound, NewPaths}
   end.
 
 
@@ -47,3 +67,27 @@ generate_candidates(CurrentWord) ->
     % Recombine in Cartesian expansion
     lists:append([AccIn, [Head ++ NewSub ++ Tail || NewSub <- Alphabet]])
   end, [], lists:seq(0,length(CurrentWord)-1)).
+
+
+
+
+% Could be made nicer -
+tests() ->
+  % generate_candidates
+  ["ax","bx","cx","dx","ex","fx","gx","hx","ix","jx","kx",
+   "lx","mx","nx","ox","px","qx","rx","sx","tx","ux","vx","wx",
+   "yx","zx","xa","xb","xc","xd","xe","xf","xg","xh","xi","xj",
+   "xk","xl","xm","xn","xo","xp","xq","xr","xs","xt","xu","xv",
+   "xw","xy","xz"] = generate_candidates("xx"),
+
+   % find_neighbors
+   Neighbors = lists:sort(["bbcde","abcdf"]),
+   Neighbors = lists:sort(find_neighbors("abcde", ["abcdf", "absss", "sddef", "bbcde"])),
+
+   % search_neighbors
+   {found,["absde","abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
+   {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
+   {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
+
+
+   ok.
