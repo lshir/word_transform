@@ -11,13 +11,14 @@ define_alphabet() ->
   lists:map(fun(X) -> [X] end, lists:seq(97, 122)).
 
 
-% % Generates candidates set from a current word and a dictionary
-% % @todo add tracking word path
-% % @todo add argument for target
-% % @todo format return to parent process
-% find_neighbors(CurrentWord, Dictionary) -> 
-%   % lists:splitwith?
-%   
+% Generates candidates set from a current word and a dictionary
+% @todo add tracking word path
+% @todo add argument for target
+% @todo format return to parent process
+find_neighbors(CurrentWord, Dictionary) -> 
+  Candidates = generate_candidates(CurrentWord),
+  lists:filter(fun(Word) -> lists:member(Word, Dictionary) end, Candidates).
+
 
 
 % Generates a set of all words that could possibly be reached from the current one (without regard for the dictionary)
