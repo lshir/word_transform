@@ -2,6 +2,7 @@
 -compile(export_all).
 
 % Reads in the file as a path and returns the words in a list.
+% @todo for the success of our search, we need to check that the target is in the dictionary
 read_dictionary(File) ->
   {ok, Binary} = file:read_file(File),
   string:tokens(binary_to_list(Binary), "\n").
@@ -12,12 +13,24 @@ define_alphabet() ->
 
 
 % Generates candidates set from a current word and a dictionary
-% @todo add tracking word path
-% @todo add argument for target
-% @todo format return to parent process
 find_neighbors(CurrentWord, Dictionary) -> 
   Candidates = generate_candidates(CurrentWord),
   lists:filter(fun(Word) -> lists:member(Word, Dictionary) end, Candidates).
+
+
+% Wraps find_neighbors to test if we have a match, dead, or a new set of candidates
+search_neighbors(CurrentPath, Target, Dictionary) ->
+  CurrentWord = hd(CurrentPath), % could push or pop here, just need to be consistent
+  Neighbors = find_neighbors(CurrentWord, Dictionary),
+  case lists:member(Target, Neighbors) of 
+    true ->
+      {found, [Target | CurrentPath]};
+    false when Neighbors =:= [] -> 
+      {dead, CurrentPath};
+    false ->
+      {notfound}
+  end.
+
 
 
 
