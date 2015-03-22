@@ -5,49 +5,84 @@
 % Will start the judge, which keeps track of matches and the success of the search
 %
 search(StartWord, TargetWord, Dictionary) ->
-  {Status, Neighbors} = search_neighbors([StartWord], TargetWord, Dictionary),
-  case Status of 
-    found -> {found, [StartWord, TargetWord]};
-    dead -> {no_match};
-    notfound -> 
-      judge(StartWord, TargetWord, [], Neighbors, Dictionary -- lists:append(Neighbors))
-  end.
+  judge(StartWord, TargetWord, [], [[{[StartWord], live}]], Dictionary).
+  % {Status, Neighbors} = search_neighbors([StartWord], TargetWord, Dictionary),
+  % case Status of 
+  %   found -> {found, [StartWord, TargetWord]};
+  %   dead -> {no_match};
+  %   notfound -> 
+  %     NeighborPaths = [{Path, live} || Path <- Neighbors],
+  %     judge(StartWord, TargetWord, [], NeighborPaths, Dictionary -- lists:append(Neighbors))
+  % end.
   
 
 
 
 
 % Paths will be structured as : 
-% {live, length, Path}
-% {active, length, Path, Pid}
+% [word sequence], live / Pid
 
-  
-judge(_Start, _Target, [], [],  _Dictionary) -> % ran out of paths to search
-  {failure};
-judge(_Start, _Target, Match, [], _Dictionary) -> % ran out of paths to search
-  {found, Match};
-judge(_Start, _Target, [], Paths,  []) -> % ran out of dictionary to search
-  {failure};
-judge(Start, Target, Match, Paths, Dictionary) -> % first call
 
-  % for each member of Paths, spawn a search_neighbors
-  % collect output as follows:
-    % if found, compare it to current match
-    % if dead, remove from Paths
-    % if living, add to paths
+% Exit clauses
+judge(_Start, _Target, Match, [],  _Dictionary) -> % ran out of paths to search
+  Match;
+judge(_Start, _Target, [], _Paths,  []) -> % ran out of dictionary to search
+  failure;
+% Entry / loop clause
+judge(Start, Target, Match, Paths, Dictionary) ->
+  % Get the list of minimum length paths
+  MinLength = lists:min(lists:filtermap(
+    fun({Path, Status}) ->
+      case Status of live ->
+        {true, length(Path)};
+        _ -> false
+      end
+    end,
+  Paths)),
 
-  % filter paths down to the live ones PathSearch = lists:filter(fun)
-  1
+  % Spawn search processes
+  Whoami = self(),
+  _MinPaths = lists:map(fun({Path, Status}) ->
+    case Status of live
+      when length(Path) =:= MinLength ->
+        {Path, spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)} end)};
+      _ -> {Path, Status}
+    end      
+  end, Paths),
+  receive
+    {_From, {dead, Path}} ->
+      io:format("Removing path ~p~n", [Path]),
+      NewPaths = lists:keydelete(Path, 1, Paths),
+      NewMatch = Match,
+      NewDictionary = Dictionary;
+    {_From, {found, MatchPretender, Examined}} ->
+      io:format("Found match ~p~n",[MatchPretender]),
+      NewMatch = if
+        length(Match) < length(MatchPretender) , Match =/= [] -> Match;
+        true -> MatchPretender
+      end,
+      NewDictionary = Dictionary -- Examined,
+      NewPaths = lists:keydelete(lists:nthtail(1, MatchPretender), 1, Paths);
+    {_From, {notfound, PathContenders}} -> 
+      io:format("Not found but let's keep looking~n", []),
+      NewMatch = Match,
+      NewPaths =
+        lists:append(
+          lists:keydelete(lists:nthtail(1, lists:nth(1, PathContenders)), 1, Paths), % old portion
+          [{Path, live} || Path <- PathContenders] % new paths
+        ),
+      NewDictionary = Dictionary -- lists:map(fun(NewPath) -> lists:nth(1, NewPath) end, PathContenders) % remove visited members of dictionary
+    after 0 -> 
+      io:format("Nothing~n"),
+      NewPaths = Paths,
+      NewMatch = Match,
+      NewDictionary = Dictionary
+  end,
 
-    .
+  judge(Start, Target, NewMatch, NewPaths, NewDictionary)
 
-  % {Status, PathsNew} = search_neighbors([Start], Target, Dictionary),
-  % case Status of
-  %   found -> {found, PathsNew}; % @todo need to update to BEST path
-  %   dead -> {dead};
-  %   notfound -> press_on
-  % end.
-
+  % judge(Start, Target, NewMatch, NewPaths, NewDictionary)
+  .
 
 
 
@@ -74,7 +109,7 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
   Neighbors = find_neighbors(CurrentWord, Dictionary),
   case lists:member(Target, Neighbors) of 
     true ->
-      {found, [Target | CurrentPath]};
+      {found, [Target | CurrentPath], Neighbors};
     false when Neighbors =:= [] -> 
       {dead, CurrentPath};
     false ->
@@ -121,7 +156,7 @@ tests() ->
    {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
    % judge
-   judge("abcde", "abccf", [],[["bbcde","abcde"],["aacde","abcde"],["abcce","abcde"],["abcdd","abcde"]],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ).
+   judge("abcde", "abccf", [],[{["bbcde","abcde"], live},{["aacde","abcde"], live},{["abcce","abcde"], live},{["abcdd","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ).
 
 
    % ok.
