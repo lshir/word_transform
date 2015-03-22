@@ -4,18 +4,49 @@
 
 % Will start the judge, which keeps track of matches and the success of the search
 %
-% search(StartWord, TargetWord, Dictionary) ->
-  
-judge(_Start, _Target, Match, [], _Dictionary) ->
-  {found, Match};
-judge(_Start, _Target, _Match, Paths,  []) -> {failure};
-judge(Start, Target, Match, Paths, Dictionary) -> % first call
-  {Status, PathsNew} = search_neighbors([Start], Target, Dictionary),
-  case Status of
-    found -> {found, PathsNew}; % @todo need to update to BEST path
-    dead -> {dead};
-    notfound -> "do some stuff to iterate"
+search(StartWord, TargetWord, Dictionary) ->
+  {Status, Neighbors} = search_neighbors([StartWord], TargetWord, Dictionary),
+  case Status of 
+    found -> {found, [StartWord, TargetWord]};
+    dead -> {no_match};
+    notfound -> 
+      judge(StartWord, TargetWord, [], Neighbors, Dictionary -- lists:append(Neighbors))
   end.
+  
+
+
+
+
+% Paths will be structured as : 
+% {live, length, Path}
+% {active, length, Path, Pid}
+
+  
+judge(_Start, _Target, [], [],  _Dictionary) -> % ran out of paths to search
+  {failure};
+judge(_Start, _Target, Match, [], _Dictionary) -> % ran out of paths to search
+  {found, Match};
+judge(_Start, _Target, [], Paths,  []) -> % ran out of dictionary to search
+  {failure};
+judge(Start, Target, Match, Paths, Dictionary) -> % first call
+
+  % for each member of Paths, spawn a search_neighbors
+  % collect output as follows:
+    % if found, compare it to current match
+    % if dead, remove from Paths
+    % if living, add to paths
+
+  % filter paths down to the live ones PathSearch = lists:filter(fun)
+  1
+
+    .
+
+  % {Status, PathsNew} = search_neighbors([Start], Target, Dictionary),
+  % case Status of
+  %   found -> {found, PathsNew}; % @todo need to update to BEST path
+  %   dead -> {dead};
+  %   notfound -> press_on
+  % end.
 
 
 
@@ -89,5 +120,8 @@ tests() ->
    {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
    {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
+   % judge
+   judge("abcde", "abccf", [],[["bbcde","abcde"],["aacde","abcde"],["abcce","abcde"],["abcdd","abcde"]],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ).
 
-   ok.
+
+   % ok.
