@@ -5,35 +5,20 @@
 % Will start the judge, which keeps track of matches and the success of the search
 %
 search(StartWord, TargetWord, Dictionary) ->
-  judge(TargetWord, [], [[{[StartWord], live}]], Dictionary, 0).
-  % {Status, Neighbors} = search_neighbors([StartWord], TargetWord, Dictionary),
-  % case Status of 
-  %   found -> {found, [StartWord, TargetWord]};
-  %   dead -> {no_match};
-  %   notfound -> 
-  %     NeighborPaths = [{Path, live} || Path <- Neighbors],
-  %     judge(StartWord, TargetWord, [], NeighborPaths, Dictionary -- lists:append(Neighbors))
-  % end.
-  
+  judge(TargetWord, [], [{[StartWord], live}], Dictionary)
 
-
-
-
-% Paths will be structured as : 
-% [word sequence], live / Pid
+  % @todo - format output into pretty
+  .
 
 
 % Exit clauses
-judge(_Target, Match, [],  _Dictionary, _N) -> % ran out of paths to search
+judge(_Target, Match, [],  _Dictionary) -> % ran out of paths to search
     Match;
-judge(_Target, [], _Paths,  [], _N) -> % ran out of dictionary to search
+judge(_Target, [], _Paths,  []) -> % ran out of dictionary to search
   failure;
-% judge(_Target, Match, Paths, Dictionary, N) -> % all dead
-
-
 
 % Entry / loop clause
-judge(Target, Match, Paths, Dictionary, N) ->
+judge(Target, Match, Paths, Dictionary) ->
   io:format("Path set is ~p~n~n", [Paths]),
   % Check for early exit if all paths are dead
   NonDeadPaths = lists:filter(fun({_Key, Status}) -> Status =/= dead end, Paths),
@@ -78,7 +63,16 @@ judge(Target, Match, Paths, Dictionary, N) ->
       end,
       NewDictionary = Dictionary -- Examined,
       MatchBase = tl(MatchContender), % this is the base of the match, which we must mark as dead so as to avoid revisiting
-      NewPaths = combine_path_lists([{MatchBase, dead}], PathsSpawned);
+
+      % we remove paths that are longer than the best match
+      NewPaths = 
+        lists:map(fun({Key, Status}) ->
+          NewStatus = case length(Key) >= length(NewMatch) of
+            true -> dead;
+            false -> Status
+          end,
+          {Key, NewStatus}
+        end, combine_path_lists([{MatchBase, dead}], PathsSpawned));
     {_From, {notfound, PathContenders}} -> 
       % io:format("Not found but let's keep looking~n", []),
       NewMatch = Match,
@@ -90,10 +84,6 @@ judge(Target, Match, Paths, Dictionary, N) ->
           [{Path, live} || Path <- PathContenders]
         ),
       NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, PathContenders) % remove visited members of dictionary
-
-
-        % todo remove longer paths after match
-
     after 0 -> 
       io:format("Nothing~n"),
       NewPaths = Paths,
@@ -106,14 +96,7 @@ judge(Target, Match, Paths, Dictionary, N) ->
   NewPathsNonDead = case NonDeadPaths =:= [] of true -> [];
     false -> NewPaths
   end,
-
-  timer:sleep(1000),
-  if N > 1000 ->
-    ok;
-    true -> judge(Target, NewMatch, NewPathsNonDead, NewDictionary, N + 1)
-  end
-  % {Target, NewMatch, NewPaths, NewDictionary}
-  .
+  judge(Target, NewMatch, NewPathsNonDead, NewDictionary).
 
 
 combine_path_lists(PathsFavored, PathsSecondary) ->
@@ -140,7 +123,6 @@ find_neighbors(CurrentWord, Dictionary) ->
 
 % Wraps find_neighbors to test if we have a match, dead, or a new set of candidates
 search_neighbors(CurrentPath, Target, Dictionary) ->
-  io:format("~p searching on ~p~n", [self(), CurrentPath]),
   CurrentWord = hd(CurrentPath), % could push or pop here, just need to be consistent
   Neighbors = find_neighbors(CurrentWord, Dictionary),
   case lists:member(Target, Neighbors) of 
@@ -187,7 +169,7 @@ tests() ->
   Neighbors = lists:sort(find_neighbors("abcde", ["abcdf", "absss", "sddef", "bbcde"])),
 
   % search_neighbors
-  {found,["absde","abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
+  {found,["absde","abcde","abcdx"], ["absde"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
   {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
   {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
@@ -195,9 +177,16 @@ tests() ->
   [{x,50},{y,60},{z,0}] = combine_path_lists([{x, 50}, {y, 60}], [{y, 0}, {z, 0}]),
 
   % judge
-  % judge( "abccf", [],[{["bbcde","abcde"], live},{["aacde","abcde"], live},{["abcce","abcde"], live},{["abcdd","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] , 0).
+  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
+  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
+  ["bbbdf","bbbde","bbcde","abcde"] =
+    judge( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] ),
+  [] = judge( "abccf", [],[{["bbcde","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ),
+  ["abbbb","abbbe","abcbe","abcde"] =
+    judge( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abbbe", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  [] = judge( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  ["abbbb","abbbe","abcbe","abcde"] =
+    judge( "abbbb", [], [{["abcde"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  ["abbbb","abbeb"] = judge( "abbbb", [], [{["abcde"], live}, {["bbbde"], live}, {["abbeb"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
 
-  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] , 0),
-  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] , 0),
-  ["bbbde","bbcde","abcde"] = judge( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] , 0).
-  % ok.
+  ok.
