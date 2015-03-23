@@ -5,7 +5,7 @@
 % Will start the judge, which keeps track of matches and the success of the search
 %
 search(StartWord, TargetWord, Dictionary) ->
-  judge(StartWord, TargetWord, [], [[{[StartWord], live}]], Dictionary).
+  judge(TargetWord, [], [[{[StartWord], live}]], Dictionary, 0).
   % {Status, Neighbors} = search_neighbors([StartWord], TargetWord, Dictionary),
   % case Status of 
   %   found -> {found, [StartWord, TargetWord]};
@@ -24,54 +24,76 @@ search(StartWord, TargetWord, Dictionary) ->
 
 
 % Exit clauses
-judge(_Start, _Target, Match, [],  _Dictionary) -> % ran out of paths to search
-  Match;
-judge(_Start, _Target, [], _Paths,  []) -> % ran out of dictionary to search
+judge(_Target, Match, [],  _Dictionary, _N) -> % ran out of paths to search
+    Match;
+judge(_Target, [], _Paths,  [], _N) -> % ran out of dictionary to search
   failure;
+% judge(_Target, Match, Paths, Dictionary, N) -> % all dead
+
+
+
 % Entry / loop clause
-judge(Start, Target, Match, Paths, Dictionary) ->
+judge(Target, Match, Paths, Dictionary, N) ->
+  io:format("Path set is ~p~n~n", [Paths]),
+  % Check for early exit if all paths are dead
+  NonDeadPaths = lists:filter(fun({_Key, Status}) -> Status =/= dead end, Paths),
+
   % Get the list of minimum length paths
-  MinLength = lists:min(lists:filtermap(
+  LivePaths = lists:filtermap(
     fun({Path, Status}) ->
       case Status of live ->
         {true, length(Path)};
         _ -> false
       end
     end,
-  Paths)),
+  Paths), 
+  MinLength = if LivePaths =:= [] -> infinity;
+    LivePaths =/= [] -> lists:min(LivePaths)
+  end,
 
   % Spawn search processes
   Whoami = self(),
-  _MinPaths = lists:map(fun({Path, Status}) ->
+  PathsSpawned = lists:map(fun({Path, Status}) ->
     case Status of live
       when length(Path) =:= MinLength ->
-        {Path, spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)} end)};
+        io:format("Spawning ~p search~n", [Path]),
+        {Path, spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)},
+          io:format("~p is done~n", [self()])
+
+        end)};
       _ -> {Path, Status}
     end      
   end, Paths),
   receive
     {_From, {dead, Path}} ->
-      io:format("Removing path ~p~n", [Path]),
-      NewPaths = lists:keydelete(Path, 1, Paths),
+      io:format("Removing path ~p from ~p~n", [Path, PathsSpawned]),
+      NewPaths = combine_path_lists([{Path, dead}], PathsSpawned),
       NewMatch = Match,
       NewDictionary = Dictionary;
-    {_From, {found, MatchPretender, Examined}} ->
-      io:format("Found match ~p~n",[MatchPretender]),
+    {_From, {found, MatchContender, Examined}} ->
+      % io:format("Found match ~p~n",[MatchContender]),
       NewMatch = if
-        length(Match) < length(MatchPretender) , Match =/= [] -> Match;
-        true -> MatchPretender
+        length(Match) < length(MatchContender) , Match =/= [] -> Match;
+        true -> MatchContender
       end,
       NewDictionary = Dictionary -- Examined,
-      NewPaths = lists:keydelete(lists:nthtail(1, MatchPretender), 1, Paths);
+      MatchBase = tl(MatchContender), % this is the base of the match, which we must mark as dead so as to avoid revisiting
+      NewPaths = combine_path_lists([{MatchBase, dead}], PathsSpawned);
     {_From, {notfound, PathContenders}} -> 
-      io:format("Not found but let's keep looking~n", []),
+      % io:format("Not found but let's keep looking~n", []),
       NewMatch = Match,
       NewPaths =
-        lists:append(
-          lists:keydelete(lists:nthtail(1, lists:nth(1, PathContenders)), 1, Paths), % old portion
-          [{Path, live} || Path <- PathContenders] % new paths
+        combine_path_lists( 
+          % old portion (taking hd of the first one because they should all have the same nthtail)
+          lists:keydelete(tl(hd(PathContenders)), 1, PathsSpawned), 
+          % new paths
+          [{Path, live} || Path <- PathContenders]
         ),
-      NewDictionary = Dictionary -- lists:map(fun(NewPath) -> lists:nth(1, NewPath) end, PathContenders) % remove visited members of dictionary
+      NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, PathContenders) % remove visited members of dictionary
+
+
+        % todo remove longer paths after match
+
     after 0 -> 
       io:format("Nothing~n"),
       NewPaths = Paths,
@@ -79,11 +101,24 @@ judge(Start, Target, Match, Paths, Dictionary) ->
       NewDictionary = Dictionary
   end,
 
-  judge(Start, Target, NewMatch, NewPaths, NewDictionary)
 
-  % judge(Start, Target, NewMatch, NewPaths, NewDictionary)
+  % If all the paths are dead, we pass an empty pathset to prompt function return
+  NewPathsNonDead = case NonDeadPaths =:= [] of true -> [];
+    false -> NewPaths
+  end,
+
+  timer:sleep(1000),
+  if N > 1000 ->
+    ok;
+    true -> judge(Target, NewMatch, NewPathsNonDead, NewDictionary, N + 1)
+  end
+  % {Target, NewMatch, NewPaths, NewDictionary}
   .
 
+
+combine_path_lists(PathsFavored, PathsSecondary) ->
+  CombinedPaths = PathsFavored ++ PathsSecondary,
+  lists:map(fun(Key) ->  {Key, proplists:get_value(Key, CombinedPaths)} end, proplists:get_keys(CombinedPaths)).
 
 
 % Reads in the file as a path and returns the words in a list.
@@ -105,6 +140,7 @@ find_neighbors(CurrentWord, Dictionary) ->
 
 % Wraps find_neighbors to test if we have a match, dead, or a new set of candidates
 search_neighbors(CurrentPath, Target, Dictionary) ->
+  io:format("~p searching on ~p~n", [self(), CurrentPath]),
   CurrentWord = hd(CurrentPath), % could push or pop here, just need to be consistent
   Neighbors = find_neighbors(CurrentWord, Dictionary),
   case lists:member(Target, Neighbors) of 
@@ -146,17 +182,22 @@ tests() ->
    "xk","xl","xm","xn","xo","xp","xq","xr","xs","xt","xu","xv",
    "xw","xy","xz"] = generate_candidates("xx"),
 
-   % find_neighbors
-   Neighbors = lists:sort(["bbcde","abcdf"]),
-   Neighbors = lists:sort(find_neighbors("abcde", ["abcdf", "absss", "sddef", "bbcde"])),
+  % find_neighbors
+  Neighbors = lists:sort(["bbcde","abcdf"]),
+  Neighbors = lists:sort(find_neighbors("abcde", ["abcdf", "absss", "sddef", "bbcde"])),
 
-   % search_neighbors
-   {found,["absde","abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
-   {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
-   {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
+  % search_neighbors
+  {found,["absde","abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
+  {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
+  {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
-   % judge
-   judge("abcde", "abccf", [],[{["bbcde","abcde"], live},{["aacde","abcde"], live},{["abcce","abcde"], live},{["abcdd","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ).
+  % combine_path_lists
+  [{x,50},{y,60},{z,0}] = combine_path_lists([{x, 50}, {y, 60}], [{y, 0}, {z, 0}]),
 
+  % judge
+  % judge( "abccf", [],[{["bbcde","abcde"], live},{["aacde","abcde"], live},{["abcce","abcde"], live},{["abcdd","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] , 0).
 
-   % ok.
+  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] , 0),
+  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] , 0),
+  ["bbbde","bbcde","abcde"] = judge( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] , 0).
+  % ok.
