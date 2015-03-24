@@ -3,6 +3,18 @@
 -compile(export_all).
 
 %%
+%% DESCRIPTION 
+%% 
+%% This performs a tree search with the branches as dict keys and the status of that branch as the value.
+%% We can't filter the branches (paths) by some distance because we don't have a guarantee of convexity
+%% (i.e. two words that "look" similar under most metrics could be far apart)
+%%
+%% Words for dictionary sampled from http://www.morewords.com
+%%
+
+
+
+%%
 %% EXTERNAL
 %%
 
@@ -12,10 +24,15 @@
 %% TargetWord - The word we are looking for
 %% Dictionary - A list of words that may be used. Must include the TargetWord.
 transform(StartWord, TargetWord, Dictionary) ->
-  search(TargetWord, [], [{[StartWord], live}], Dictionary)
+  PathDict = dict:new(),
+  DictionaryComplete = case lists:member(TargetWord, Dictionary) of true -> Dictionary; false -> [TargetWord | Dictionary] end -- [StartWord],
+  Result = search(TargetWord, [], dict:store([StartWord], live, PathDict), DictionaryComplete),
 
-  % @todo - format output into pretty
-  .
+  Message = case Result of [] -> "No result was found!~n";
+    _ -> string:join(lists:reverse(Result), "\n")
+  end,
+  io:format(Message ++ "\n"),
+  lists:reverse(Result).
 
 
 %%
@@ -26,7 +43,7 @@ transform(StartWord, TargetWord, Dictionary) ->
 %%
 %% Target - The word we are looking for 
 %% Match - The best match so far
-%% Paths - A proplist of paths. Key is the list of words, value is the status, which could be either 'live' (continue looking here), 'dead' (don't continue), or Pid (actively looking here)
+%% Paths - A dictionary of paths. Key is the list of words, value is the status, which could be either 'live' (continue looking here), 'dead' (don't continue), or Pid (actively looking here)
 %% Dictionary - A list of words that may be used.
 
 % Exit clauses
@@ -37,44 +54,31 @@ search(_Target, [], _Paths,  []) -> % ran out of dictionary to search
 
 % Entry / loop clause
 search(Target, Match, Paths, Dictionary) ->
-  io:format("Path set is ~p~n~n", [Paths]),
+  io:format("~n~nPath set is ~p~n", [dict:to_list(Paths)]),
   % Check for early exit if all paths are dead
-  NonDeadPaths = lists:filter(fun({_Key, Status}) -> Status =/= dead end, Paths),
-
-  % Get the list of minimum length paths
-  LivePaths = lists:filtermap(
-    fun({Path, Status}) ->
-      case Status of live ->
-        {true, length(Path)};
-        _ -> false
-      end
-    end,
-  Paths), 
-  MinLength = if LivePaths =:= [] -> infinity;
-    LivePaths =/= [] -> lists:min(LivePaths)
-  end,
+  NonDeadPaths = dict:filter(fun(_Key, Status) -> Status =/= dead end, Paths),
 
   % Spawn search processes
   Whoami = self(),
-  PathsSpawned = lists:map(fun({Path, Status}) ->
-    case Status of live
-      when length(Path) =:= MinLength ->
+  PathsSpawned = dict:map(fun(Path, Status) ->
+    case Status of live ->
         io:format("Spawning ~p search~n", [Path]),
-        {Path, spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)},
+        spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)},
           io:format("~p is done~n", [self()])
-
-        end)};
-      _ -> {Path, Status}
+        end);
+      _ -> Status
     end      
   end, Paths),
+
+  io:format("Path set is ~p~n", [dict:to_list(PathsSpawned)]),
   receive
     {_From, {dead, Path}} ->
-      io:format("Removing path ~p from ~p~n", [Path, PathsSpawned]),
-      NewPaths = combine_path_lists([{Path, dead}], PathsSpawned),
+      io:format("Removing path ~p ~n", [Path]),
+      NewPaths = dict:store(Path, dead, PathsSpawned),
       NewMatch = Match,
       NewDictionary = Dictionary;
     {_From, {found, MatchContender, Examined}} ->
-      % io:format("Found match ~p~n",[MatchContender]),
+      io:format("Found match ~p~n",[MatchContender]),
       NewMatch = if
         length(Match) < length(MatchContender) , Match =/= [] -> Match;
         true -> MatchContender
@@ -84,24 +88,24 @@ search(Target, Match, Paths, Dictionary) ->
 
       % we remove paths that are longer than the best match
       NewPaths = 
-        lists:map(fun({Key, Status}) ->
+        dict:map(fun(Key, Status) ->
           NewStatus = case length(Key) >= length(NewMatch) of
             true -> dead;
             false -> Status
           end,
-          {Key, NewStatus}
-        end, combine_path_lists([{MatchBase, dead}], PathsSpawned));
-    {_From, {notfound, PathContenders}} -> 
-      % io:format("Not found but let's keep looking~n", []),
+          NewStatus
+        end, dict:store(MatchBase, dead, PathsSpawned));
+    {_From, {notfound, PathBase, PathContenders}} -> 
+      io:format("Not found but let's keep looking~n", []),
       NewMatch = Match,
       NewPaths =
         combine_path_lists( 
-          % old portion (taking hd of the first one because they should all have the same nthtail)
-          lists:keydelete(tl(hd(PathContenders)), 1, PathsSpawned), 
+          % old portion
+          dict:store(PathBase, dead, PathsSpawned), 
           % new paths
-          [{Path, live} || Path <- PathContenders]
+          PathContenders
         ),
-      NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, PathContenders) % remove visited members of dictionary
+      NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, dict:fetch_keys(PathContenders)) % remove visited members of dictionary
     after 0 -> 
       io:format("Nothing~n"),
       NewPaths = Paths,
@@ -111,7 +115,7 @@ search(Target, Match, Paths, Dictionary) ->
 
 
   % If all the paths are dead, we pass an empty pathset to prompt function return
-  NewPathsNonDead = case NonDeadPaths =:= [] of true -> [];
+  NewPathsNonDead = case dict:is_empty(NonDeadPaths) of true -> [];
     false -> NewPaths
   end,
   search(Target, NewMatch, NewPathsNonDead, NewDictionary).
@@ -122,8 +126,7 @@ search(Target, Match, Paths, Dictionary) ->
 %% PathsFavored - A preferred proplist of paths
 %% PathsSecondary - A proplist of paths
 combine_path_lists(PathsFavored, PathsSecondary) ->
-  CombinedPaths = PathsFavored ++ PathsSecondary,
-  lists:map(fun(Key) ->  {Key, proplists:get_value(Key, CombinedPaths)} end, proplists:get_keys(CombinedPaths)).
+  dict:merge(fun(_K, V1, _V2) -> V1 end, PathsFavored, PathsSecondary).
 
 
 %% Reads in the file as a path and returns the words in a list.
@@ -163,8 +166,8 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
     false when Neighbors =:= [] -> 
       {dead, CurrentPath};
     false ->
-      NewPaths = [[H] ++ T || H <- Neighbors, T <- [CurrentPath]],
-      {notfound, NewPaths}
+      NewPaths = dict:from_list([{[H] ++ T, live} || H <- Neighbors, T <- [CurrentPath]]),
+      {notfound, CurrentPath, NewPaths}
   end.
 
 
@@ -202,22 +205,31 @@ tests() ->
   % search_neighbors
   {found,["absde","abcde","abcdx"], ["absde"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
   {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
-  {notfound,[["abdde","abcde","abcdx"], ["abqde","abcde","abcdx"]]} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
+  {notfound,["abcde", "abcdx"], ResDict} = search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
+  [{["abqde","abcde","abcdx"], live}, {["abdde","abcde","abcdx"], live}] = dict:to_list(ResDict),
 
   % combine_path_lists
-  [{x,50},{y,60},{z,0}] = combine_path_lists([{x, 50}, {y, 60}], [{y, 0}, {z, 0}]),
+  [{x,50},{y,60},{z,0}] = dict:to_list(combine_path_lists(dict:from_list([{x, 50}, {y, 60}]), dict:from_list([{y, 0}, {z, 0}]))),
 
   % search
-  ["bbbde","bbcde","abcde"] = search( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
-  ["bbbde","bbcde","abcde"] = search( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
+  ["bbbde","bbcde","abcde"] = search( "bbbde", [],dict:from_list([{["bbcde","abcde"], live}]),["bbbde", "bbcce", "abbde", "bqddd"] ),
+  ["bbbde","bbcde","abcde"] = search( "bbbde", [],dict:from_list([{["bbcde","abcde"], live}, {["abcdf","abcde"], live}]),["bbbde", "bbcce", "abbde", "bqddd"] ),
   ["bbbdf","bbbde","bbcde","abcde"] =
-    search( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] ),
-  [] = search( "abccf", [],[{["bbcde","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ),
+    search( "bbbdf", [],dict:from_list([{["bbcde","abcde"], live}, {["abcdf","abcde"], live}]),["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] ),
+  [] = search( "abccf", [],dict:from_list([{["bbcde","abcde"], live}]),["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ),
   ["abbbb","abbbe","abcbe","abcde"] =
-    search( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abbbe", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
-  [] = search( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+    search( "abbbb", [], dict:from_list([{["abcde"], live}]), ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abbbe", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  [] = search( "abbbb", [], dict:from_list([{["abcde"], live}]), ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
   ["abbbb","abbbe","abcbe","abcde"] =
-    search( "abbbb", [], [{["abcde"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
-  ["abbbb","abbeb"] = search( "abbbb", [], [{["abcde"], live}, {["bbbde"], live}, {["abbeb"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+    search( "abbbb", [], dict:from_list([{["abcde"], live}]), ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  ["abbbb","abbeb"] = search( "abbbb", [], dict:from_list([{["abcde"], live}, {["bbbde"], live}, {["abbeb"], live}]), ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+
+  % transform
+  DictionaryMinimal = word_transform:read_dictionary("dictionary_minimal.txt"),
+  [] = transform("barye", "bayou", DictionaryMinimal),
+  ["burry","berry","beery","beers","biers","birrs","birls",
+   "bills","billy","bilgy","bilge","binge","singe","sings",
+   "rings"] = transform("burry", "rings", DictionaryMinimal),
+
 
   ok.
