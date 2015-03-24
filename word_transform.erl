@@ -1,24 +1,42 @@
 -module(word_transform).
+-author('Shir Levkowitz <shir@lhaim.com>').
 -compile(export_all).
 
+%%
+%% EXTERNAL
+%%
 
-% Will start the judge, which keeps track of matches and the success of the search
-%
-search(StartWord, TargetWord, Dictionary) ->
-  judge(TargetWord, [], [{[StartWord], live}], Dictionary)
+%% Will start the search, which keeps track of matches and the success of the search
+%%
+%% StartWord - A word to begin our search
+%% TargetWord - The word we are looking for
+%% Dictionary - A list of words that may be used. Must include the TargetWord.
+transform(StartWord, TargetWord, Dictionary) ->
+  search(TargetWord, [], [{[StartWord], live}], Dictionary)
 
   % @todo - format output into pretty
   .
 
 
+%%
+%% INTERNAL 
+%% 
+
+%% Executes the search
+%%
+%% Target - The word we are looking for 
+%% Match - The best match so far
+%% Paths - A proplist of paths. Key is the list of words, value is the status, which could be either 'live' (continue looking here), 'dead' (don't continue), or Pid (actively looking here)
+%% Dictionary - A list of words that may be used.
+
 % Exit clauses
-judge(_Target, Match, [],  _Dictionary) -> % ran out of paths to search
-    Match;
-judge(_Target, [], _Paths,  []) -> % ran out of dictionary to search
+search(_Target, Match, [],  _Dictionary) -> % ran out of paths to search
+  Match;
+search(_Target, [], _Paths,  []) -> % ran out of dictionary to search
   failure;
 
 % Entry / loop clause
-judge(Target, Match, Paths, Dictionary) ->
+search(Target, Match, Paths, Dictionary) ->
   io:format("Path set is ~p~n~n", [Paths]),
   % Check for early exit if all paths are dead
   NonDeadPaths = lists:filter(fun({_Key, Status}) -> Status =/= dead end, Paths),
@@ -96,32 +114,46 @@ judge(Target, Match, Paths, Dictionary) ->
   NewPathsNonDead = case NonDeadPaths =:= [] of true -> [];
     false -> NewPaths
   end,
-  judge(Target, NewMatch, NewPathsNonDead, NewDictionary).
+  search(Target, NewMatch, NewPathsNonDead, NewDictionary).
 
 
+%% Simple helper function to combine two sets of paths. Where their keys overlap the first one is used.
+%%
+%% PathsFavored - A preferred proplist of paths
+%% PathsSecondary - A proplist of paths
 combine_path_lists(PathsFavored, PathsSecondary) ->
   CombinedPaths = PathsFavored ++ PathsSecondary,
   lists:map(fun(Key) ->  {Key, proplists:get_value(Key, CombinedPaths)} end, proplists:get_keys(CombinedPaths)).
 
 
-% Reads in the file as a path and returns the words in a list.
-% @todo for the success of our search, we need to check that the target is in the dictionary
+%% Reads in the file as a path and returns the words in a list.
+%% @todo for the success of our search, we need to check that the target is in the dictionary
+%%
+%% File - A filename to read in
 read_dictionary(File) ->
   {ok, Binary} = file:read_file(File),
   string:tokens(binary_to_list(Binary), "\n").
 
-% The assumption here is that our alphabet is lowercase a-z, but we want this to be flexible enough to handle other alphabets.
+
+%% The assumption here is that our alphabet is lowercase a-z, but we want this to be flexible enough to handle other alphabets.
 define_alphabet() ->
   lists:map(fun(X) -> [X] end, lists:seq(97, 122)).
 
 
-% Generates candidates set from a current word and a dictionary
+%% Generates candidates set from a current word and a dictionary
+%%
+%% CurrentWord - A word
+%% Dictionary - A set of words to explore
 find_neighbors(CurrentWord, Dictionary) -> 
   Candidates = generate_candidates(CurrentWord),
   lists:filter(fun(Word) -> lists:member(Word, Dictionary) end, Candidates).
 
 
-% Wraps find_neighbors to test if we have a match, dead, or a new set of candidates
+%% Wraps find_neighbors to test if we have a match, dead, or a new set of candidates
+%%
+%% CurrentPath - The list of words in the current path, newest at the head
+%% Target - The word we are searching for
+%% Dictionary - List of words to explore
 search_neighbors(CurrentPath, Target, Dictionary) ->
   CurrentWord = hd(CurrentPath), % could push or pop here, just need to be consistent
   Neighbors = find_neighbors(CurrentWord, Dictionary),
@@ -136,11 +168,10 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
   end.
 
 
-
-
-% Generates a set of all words that could possibly be reached from the current one (without regard for the dictionary)
-%
-% Loops over each letter in the word, does a Cartesian expansion with all possible substitutions
+%% Generates a set of all words that could possibly be reached from the current one (without regard for the dictionary)
+%% Loops over each letter in the word, does a Cartesian expansion with all possible substitutions
+%%
+%% CurrentWord - A word to expand
 generate_candidates(CurrentWord) ->
   lists:foldl(fun(Ind, AccIn) -> 
     % Break up CurrentWord into Head (before this letter), CurrentLetter, and Tail
@@ -153,9 +184,9 @@ generate_candidates(CurrentWord) ->
   end, [], lists:seq(0,length(CurrentWord)-1)).
 
 
-
-
-% Could be made nicer -
+%%
+%% TESTS
+%%
 tests() ->
   % generate_candidates
   ["ax","bx","cx","dx","ex","fx","gx","hx","ix","jx","kx",
@@ -176,17 +207,17 @@ tests() ->
   % combine_path_lists
   [{x,50},{y,60},{z,0}] = combine_path_lists([{x, 50}, {y, 60}], [{y, 0}, {z, 0}]),
 
-  % judge
-  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
-  ["bbbde","bbcde","abcde"] = judge( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
+  % search
+  ["bbbde","bbcde","abcde"] = search( "bbbde", [],[{["bbcde","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
+  ["bbbde","bbcde","abcde"] = search( "bbbde", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd"] ),
   ["bbbdf","bbbde","bbcde","abcde"] =
-    judge( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] ),
-  [] = judge( "abccf", [],[{["bbcde","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ),
+    search( "bbbdf", [],[{["bbcde","abcde"], live}, {["abcdf","abcde"], live}],["bbbde", "bbcce", "abbde", "bqddd", "bbbdf"] ),
+  [] = search( "abccf", [],[{["bbcde","abcde"], live}],["abcdd", "abbcc", "abccc", "abcce", "bbcde", "bacde", "aacde"] ),
   ["abbbb","abbbe","abcbe","abcde"] =
-    judge( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abbbe", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
-  [] = judge( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+    search( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abbbe", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  [] = search( "abbbb", [], [{["abcde"], live}], ["abcdd", "abcce", "abccd", "abccb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
   ["abbbb","abbbe","abcbe","abcde"] =
-    judge( "abbbb", [], [{["abcde"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
-  ["abbbb","abbeb"] = judge( "abbbb", [], [{["abcde"], live}, {["bbbde"], live}, {["abbeb"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+    search( "abbbb", [], [{["abcde"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
+  ["abbbb","abbeb"] = search( "abbbb", [], [{["abcde"], live}, {["bbbde"], live}, {["abbeb"], live}], ["abbbe", "abcdd", "abcce", "abcce", "abdcb","abdce", "abecb" , "abebb", "abbbb", "abcbe", "abede", "abbee", "abbeb", "abbbb"]),
 
   ok.
