@@ -54,7 +54,6 @@ search(_Target, [], _Paths,  []) -> % ran out of dictionary to search
 
 % Entry / loop clause
 search(Target, Match, Paths, Dictionary) ->
-  io:format("~n~nPath set is ~p~n", [dict:to_list(Paths)]),
   % Check for early exit if all paths are dead
   NonDeadPaths = dict:filter(fun(_Key, Status) -> Status =/= dead end, Paths),
 
@@ -62,27 +61,22 @@ search(Target, Match, Paths, Dictionary) ->
   Whoami = self(),
   PathsSpawned = dict:map(fun(Path, Status) ->
     case Status of live ->
-        io:format("Spawning ~p search~n", [Path]),
-        spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)},
-          io:format("~p is done~n", [self()])
-        end);
+        spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)} end);
       _ -> Status
     end      
   end, Paths),
 
-  io:format("Path set is ~p~n", [dict:to_list(PathsSpawned)]),
   receive
     {_From, {dead, Path}} ->
-      io:format("Removing path ~p ~n", [Path]),
       NewPaths = dict:store(Path, dead, PathsSpawned),
       NewMatch = Match,
       NewDictionary = Dictionary;
     {_From, {found, MatchContender, Examined}} ->
-      io:format("Found match ~p~n",[MatchContender]),
       NewMatch = if
         length(Match) < length(MatchContender) , Match =/= [] -> Match;
         true -> MatchContender
       end,
+      io:format("Match was ~p to ~p~n", [length(Match), length(MatchContender)]),
       NewDictionary = Dictionary -- Examined,
       MatchBase = tl(MatchContender), % this is the base of the match, which we must mark as dead so as to avoid revisiting
 
@@ -96,7 +90,6 @@ search(Target, Match, Paths, Dictionary) ->
           NewStatus
         end, dict:store(MatchBase, dead, PathsSpawned));
     {_From, {notfound, PathBase, PathContenders}} -> 
-      io:format("Not found but let's keep looking~n", []),
       NewMatch = Match,
       NewPaths =
         combine_path_lists( 
@@ -107,7 +100,6 @@ search(Target, Match, Paths, Dictionary) ->
         ),
       NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, dict:fetch_keys(PathContenders)) % remove visited members of dictionary
     after 0 -> 
-      io:format("Nothing~n"),
       NewPaths = Paths,
       NewMatch = Match,
       NewDictionary = Dictionary
@@ -162,6 +154,7 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
   Neighbors = find_neighbors(CurrentWord, Dictionary),
   case lists:member(Target, Neighbors) of 
     true ->
+      io:format("Found length ~p~n", [length(CurrentPath) + 1]),
       {found, [Target | CurrentPath], Neighbors};
     false when Neighbors =:= [] -> 
       {dead, CurrentPath};
@@ -227,9 +220,7 @@ tests() ->
   % transform
   DictionaryMinimal = word_transform:read_dictionary("dictionary_minimal.txt"),
   [] = transform("barye", "bayou", DictionaryMinimal),
-  ["burry","berry","beery","beers","biers","birrs","birls",
-   "bills","billy","bilgy","bilge","binge","singe","sings",
-   "rings"] = transform("burry", "rings", DictionaryMinimal),
+  14 = length(transform("burry", "rings", DictionaryMinimal)),
 
 
   ok.
