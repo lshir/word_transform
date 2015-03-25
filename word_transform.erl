@@ -1,18 +1,51 @@
 -module(word_transform).
 -author('Shir Levkowitz <shir@lhaim.com>').
--compile(export_all).
+-export([transform/3, read_dictionary/1, tests/0]).
 
-%%
+%% A simple concurrent application to transform one word into another of the same length through single-letter substitutions within a dictionary.
+
 %% DESCRIPTION 
 %% 
 %% This performs a breadth-first tree search on paths transforming one word into another through a dictionary.
 %% We can't filter the branches (paths) by some distance/similarity metric because we don't have a guarantee of convexity
 %% (i.e. two words that "look" similar under most metrics could be far apart).
 %%
-%%  Speed could be improved 
-%% 
+%%  Speed could be improved by more care in the path reduction (filtering out duplicate paths to the same word), probably through keying on the head.
+%%  Input validation is minimal; in particular be careful of poorly formatted dictionary (must have one word per line and nothing else), and inputs of wrong length.
+%%
 %% Words for dictionary sampled from http://www.morewords.com
 %%
+
+%% Examples: 
+%%  > DictionaryMinimal = word_transform:read_dictionary("dictionary_minimal.txt").
+%%  > word_transform:transform("barye", "bayou", DictionaryMinimal).
+%%  Searching paths of length 1
+%%  Searching paths of length 2
+%%  No result was found!
+%%  []
+%%  > word_transform:transform("burry", "rings", DictionaryMinimal). 
+%%  Searching paths of length 1
+%%  Searching paths of length 2
+%%  [ cropped ]
+%%  Searching paths of length 13
+%%  burry
+%%  berry
+%%  beery
+%%  beers
+%%  beets
+%%  bents
+%%  bints
+%%  bitts
+%%  bites
+%%  sites
+%%  situs
+%%  sinus
+%%  sings
+%%  rings
+%%  ["burry","berry","beery","beers","beets","bents","bints",
+%%   "bitts","bites","sites","situs","sinus","sings","rings"]
+%% 
+%% For more (internal as well as external) examples see the test/0 function
 
 
 
@@ -34,6 +67,14 @@ transform(StartWord, TargetWord, Dictionary) ->
   end,
   io:format(Message ++ "\n"),
   lists:reverse(Result).
+
+
+%% Reads in the file as a path and returns the words in a list.
+%%
+%% File - A filename to read in
+read_dictionary(File) ->
+  {ok, Binary} = file:read_file(File),
+  string:tokens(binary_to_list(Binary), "\n").
 
 
 %%
@@ -104,14 +145,6 @@ reduce_pathset(Paths) ->
     end
   end, [{paths, []}, {words, []}], Paths),
   proplists:get_value(paths, PathsFiltered).
-
-
-%% Reads in the file as a path and returns the words in a list.
-%%
-%% File - A filename to read in
-read_dictionary(File) ->
-  {ok, Binary} = file:read_file(File),
-  string:tokens(binary_to_list(Binary), "\n").
 
 
 %% The assumption here is that our alphabet is lowercase a-z, but we want this to be flexible enough to handle other alphabets.
