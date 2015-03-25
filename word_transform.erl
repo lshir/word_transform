@@ -61,7 +61,7 @@ search(_Target, Match, _Paths,  _Dictionary) when Match =/= [] -> % found match
   Match;
 search(_Target, _Match, _Paths,  []) -> % ran out of dictionary to search
   [];
-search(_Target, Match, [],  _Dictionary) -> % ran out of paths to search
+search(_Target, _Match, [],  _Dictionary) -> % ran out of paths to search
   [];
 % Entry / loop clause
 search(Target, _, Paths, Dictionary) ->
@@ -95,58 +95,6 @@ search(Target, _, Paths, Dictionary) ->
         % @todo remove colliding paths
   search(Target, Match, LivePaths, Dictionary -- Neighbors).
 
-
-% case false of true ->
-
-%   receive
-%     {_From, {dead, Path}} ->
-%       NewPaths = dict:store(Path, dead, PathsSpawned),
-%       NewMatch = Match,
-%       NewDictionary = Dictionary;
-%     {_From, {found, MatchContender, Examined}} ->
-%       NewMatch = if
-%         length(Match) < length(MatchContender) , Match =/= [] -> Match;
-%         true -> MatchContender
-%       end,
-%       io:format("Match was ~p to ~p~n", [length(Match), length(MatchContender)]),
-%       NewDictionary = Dictionary -- Examined,
-%       MatchBase = tl(MatchContender), % this is the base of the match, which we must mark as dead so as to avoid revisiting
-
-%       % we remove paths that are longer than the best match
-%       NewPaths = 
-%         dict:map(fun(Key, Status) ->
-%           NewStatus = case length(Key) >= length(NewMatch) of
-%             true -> dead;
-%             false -> Status
-%           end,
-%           NewStatus
-%         end, dict:store(MatchBase, dead, PathsSpawned));
-%     {_From, {notfound, PathBase, PathContenders}} -> 
-%       NewMatch = Match,
-%       NewPaths =
-%         combine_path_lists( 
-%           % old portion
-%           dict:store(PathBase, dead, PathsSpawned), 
-%           % new paths
-%           PathContenders
-%         ),
-%       NewDictionary = Dictionary -- lists:map(fun(NewPath) -> hd(NewPath) end, dict:fetch_keys(PathContenders)) % remove visited members of dictionary
-%     after 0 -> 
-%       NewPaths = Paths,
-%       NewMatch = Match,
-%       NewDictionary = Dictionary
-%   end,
-
-
-%   % If all the paths are dead, we pass an empty pathset to prompt function return
-%   NewPathsNonDead = case dict:is_empty(NonDeadPaths) of true -> [];
-%     false -> NewPaths
-%   end,
-%   search(Target, NewMatch, NewPathsNonDead, NewDictionary);
-
-%   false -> 
-%   ok
-% end.
 
 
 % %% Simple helper function to combine two sets of paths. Where their keys overlap the first one is used.
