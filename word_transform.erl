@@ -5,10 +5,12 @@
 %%
 %% DESCRIPTION 
 %% 
-%% This performs a tree search with the branches as dict keys and the status of that branch as the value.
-%% We can't filter the branches (paths) by some distance because we don't have a guarantee of convexity
-%% (i.e. two words that "look" similar under most metrics could be far apart)
+%% This performs a breadth-first tree search on paths transforming one word into another through a dictionary.
+%% We can't filter the branches (paths) by some distance/similarity metric because we don't have a guarantee of convexity
+%% (i.e. two words that "look" similar under most metrics could be far apart).
 %%
+%%  Speed could be improved 
+%% 
 %% Words for dictionary sampled from http://www.morewords.com
 %%
 
@@ -38,9 +40,11 @@ transform(StartWord, TargetWord, Dictionary) ->
 %% INTERNAL 
 %% 
 
-
+%% Receives and formats the output of the threads searching for neighbors
+%% 
+%% Pid
+%% Path - A path, formatted as a list as used everywhere (ordered in diminishing recency)
 collect(Pid, Path) ->
-  io:format("Collecting ~p for ~p~n", [Pid, Path]),
   receive
     {Pid, {found, Match}} when tl(Match) =:= Path -> {match, Match};
     {Pid, {dead, Path}} -> {live, []};
@@ -52,61 +56,57 @@ collect(Pid, Path) ->
 %% Executes the search
 %%
 %% Target - The word we are looking for 
-%% Match - The best match so far
-%% Paths - A dictionary of paths. Key is the list of words, value is the status, which could be either 'live' (continue looking here), 'dead' (don't continue), or Pid (actively looking here)
+%% Match - A match, or an empty set.
+%% Paths - A list of paths, each being itself a list of words with the most recent at the head and the starter at the tail
 %% Dictionary - A list of words that may be used.
-
-% Exit clauses
+  % Exit clauses
 search(_Target, Match, _Paths,  _Dictionary) when Match =/= [] -> % found match
   Match;
 search(_Target, _Match, _Paths,  []) -> % ran out of dictionary to search
   [];
 search(_Target, _Match, [],  _Dictionary) -> % ran out of paths to search
   [];
-% Entry / loop clause
+  % Entry / loop clause
 search(Target, _, Paths, Dictionary) ->
   % Spawn search processes
   Whoami = self(),
   io:format("Searching paths of length ~p~n", [length(hd(Paths))]),
+
+  PathsFiltered = reduce_pathset(Paths),
   PathsSpawned = lists:map(fun(Path) ->
     {spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)} end), Path}
-  end, Paths),
+  end, PathsFiltered),
 
   % Collect search results
   [{match, Match}, {live, LivePaths}, {neighbors, Neighbors}] =
     lists:foldl(fun({Pid, Path}, AccIn) ->
       % We don't need all matches, so only bother waiting if we need to wait!
-      AccNew = case proplists:get_value(match, AccIn) =/= [] of true -> io:format("Skipping~n", []),
+      case proplists:get_value(match, AccIn) =/= [] of true ->
           AccIn;
         false ->
             {Status, PathSet} = collect(Pid, Path),
-                  io:format("Path ~p resulted in status ~p with pathset ~p~n", [Path, Status, PathSet]),
           NewPathSet = lists:append(proplists:get_value(Status, AccIn), PathSet),
-          io:format("NEW PATHSET WAS ~p~n~n", [NewPathSet]),
           NewNeighbors = lists:append(proplists:get_value(neighbors, AccIn), [hd(NewPath) || NewPath <- NewPathSet]),
           lists:keyreplace(neighbors, 1, lists:keyreplace(Status, 1, AccIn, {Status, NewPathSet}), {neighbors, NewNeighbors})
-        end,
-
-        io:format("~p~n", [AccNew]),
-        AccNew
-
+        end
     end, [{match, []}, {live, []}, {neighbors, []}], PathsSpawned),
 
-        % @todo remove colliding paths
   search(Target, Match, LivePaths, Dictionary -- Neighbors).
 
 
-
-% %% Simple helper function to combine two sets of paths. Where their keys overlap the first one is used.
-% %%
-% %% PathsFavored - A preferred proplist of paths
-% %% PathsSecondary - A proplist of paths
-% combine_path_lists(PathsFavored, PathsSecondary) ->
-%   dict:merge(fun(_K, V1, _V2) -> V1 end, PathsFavored, PathsSecondary).
+%% Filters down the set of paths to a set with unique heads - at this point we are comparing paths against each other so we cannot 
+%% Paths - A list of paths
+reduce_pathset(Paths) -> 
+  PathsFiltered = lists:foldl(fun(Path, AccIn) -> 
+    case lists:member(hd(Path), proplists:get_value(words, AccIn)) of true -> AccIn;
+      false ->
+        [{paths, [Path | proplists:get_value(paths, AccIn)]}, {words, [hd(Path) | proplists:get_value(words, AccIn)]}]
+    end
+  end, [{paths, []}, {words, []}], Paths),
+  proplists:get_value(paths, PathsFiltered).
 
 
 %% Reads in the file as a path and returns the words in a list.
-%% @todo for the success of our search, we need to check that the target is in the dictionary
 %%
 %% File - A filename to read in
 read_dictionary(File) ->
@@ -138,7 +138,6 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
   Neighbors = find_neighbors(CurrentWord, Dictionary),
   case lists:member(Target, Neighbors) of 
     true ->
-      io:format("Found length ~p~n", [length(CurrentPath) + 1]),
       {found, [Target | CurrentPath]};
     false when Neighbors =:= [] -> 
       {dead, CurrentPath};
@@ -167,6 +166,7 @@ generate_candidates(CurrentWord) ->
 %%
 %% TESTS
 %%
+
 tests() ->
   % generate_candidates
   ["ax","bx","cx","dx","ex","fx","gx","hx","ix","jx","kx",
@@ -185,8 +185,8 @@ tests() ->
   {notfound,["abcde","abcdx"],
           [["abdde","abcde","abcdx"],["abqde","abcde","abcdx"]]}= search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
-  % combine_path_lists
-  % [{x,50},{y,60},{z,0}] = dict:to_list(combine_path_lists(dict:from_list([{x, 50}, {y, 60}]), dict:from_list([{y, 0}, {z, 0}]))),
+  % reduce_pathset
+  [["a", "b", "c"]] = reduce_pathset([["a", "b", "c"], ["a", "d", "e"]]),
 
   % search
   ["bbbde","bbcde","abcde"] = search( "bbbde", [],[["bbcde","abcde"]],["bbbde", "bbcce", "abbde", "bqddd"] ),
@@ -206,6 +206,9 @@ tests() ->
   DictionaryMinimal = read_dictionary("dictionary_minimal.txt"),
   [] = transform("barye", "bayou", DictionaryMinimal),
   14 = length(transform("burry", "rings", DictionaryMinimal)),
-
+  % slower
+  Dictionary = read_dictionary("dictionary.txt"),
+  10 = length(transform("smart", "brain", Dictionary)),
+  9 = length(transform("smart", "boise", Dictionary)),
 
   ok.
