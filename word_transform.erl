@@ -138,14 +138,7 @@ search(Target, _, Paths, Dictionary) ->
 %% Filters down the set of paths to a set with unique heads - at this point we are comparing paths against each other so we cannot 
 %% Paths - A list of paths
 reduce_pathset(Paths) -> 
-  PathsFiltered = lists:foldl(fun(Path, AccIn) -> 
-    case lists:member(hd(Path), proplists:get_value(words, AccIn)) of true -> AccIn;
-      false ->
-        [{paths, [Path | proplists:get_value(paths, AccIn)]}, {words, [hd(Path) | proplists:get_value(words, AccIn)]}]
-    end
-  end, [{paths, []}, {words, []}], Paths),
-  proplists:get_value(paths, PathsFiltered).
-
+  lists:usort(fun(PathA, PathB) -> hd(PathA) =< hd(PathB) end, Paths).
 
 %% The assumption here is that our alphabet is lowercase a-z, but we want this to be flexible enough to handle other alphabets.
 define_alphabet() ->
