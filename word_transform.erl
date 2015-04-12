@@ -1,6 +1,9 @@
 -module(word_transform).
 -author('Shir Levkowitz <shir@lhaim.com>').
--export([transform/3, read_dictionary/1, tests/0]).
+% -export([transform/3, read_dictionary/1, tests/0]).
+
+
+-compile(export_all).
 
 %% A simple concurrent application to transform one word into another of the same length through single-letter substitutions within a dictionary.
 
@@ -85,12 +88,11 @@ read_dictionary(File) ->
 %% 
 %% Pid
 %% Path - A path, formatted as a list as used everywhere (ordered in diminishing recency)
-collect(Pid, Path) ->
+collect(Ref) ->
   receive
-    {Pid, {found, Match}} when tl(Match) =:= Path -> {match, Match};
-    {Pid, {dead, Path}} -> {live, []};
-    {Pid, {notfound, Path, Neighbors}} -> {live, Neighbors};
-    {Pid, _} -> huh
+    {_Pid, Ref, {found, Match}} -> {match, Match};
+    {_Pid, Ref, {dead, _Path}} -> {live, []};
+    {_Pid, Ref, {notfound, Neighbors}} -> {live, Neighbors}
   end.
 
 
@@ -111,26 +113,30 @@ search(_Target, _Match, [],  _Dictionary) -> % ran out of paths to search
 search(Target, _, Paths, Dictionary) ->
   % Spawn search processes
   Whoami = self(),
-  io:format("Searching paths of length ~p~n", [length(hd(Paths))]),
+  Ref = make_ref(),
+  io:format("Searching paths of length ~p with ref ~p~n", [length(hd(Paths)), Ref]),
 
   PathsFiltered = reduce_pathset(Paths),
   PathsSpawned = lists:map(fun(Path) ->
-    {spawn(fun() -> Whoami ! {self(), search_neighbors(Path, Target, Dictionary)} end), Path}
+    {spawn(fun() -> Whoami ! {self(), Ref, search_neighbors(Path, Target, Dictionary)} end), Path}
   end, PathsFiltered),
 
   % Collect search results
   [{match, Match}, {live, LivePaths}, {neighbors, Neighbors}] =
-    lists:foldl(fun({Pid, Path}, AccIn) ->
+    lists:foldl(fun(_PathInfo, AccIn) ->
       % We don't need all matches, so only bother waiting if we need to wait!
       case proplists:get_value(match, AccIn) =/= [] of true ->
           AccIn;
         false ->
-            {Status, PathSet} = collect(Pid, Path),
+          {Status, PathSet} = collect(Ref),
           NewPathSet = lists:append(proplists:get_value(Status, AccIn), PathSet),
           NewNeighbors = lists:append(proplists:get_value(neighbors, AccIn), [hd(NewPath) || NewPath <- NewPathSet]),
           lists:keyreplace(neighbors, 1, lists:keyreplace(Status, 1, AccIn, {Status, NewPathSet}), {neighbors, NewNeighbors})
         end
     end, [{match, []}, {live, []}, {neighbors, []}], PathsSpawned),
+
+
+
 
   search(Target, Match, LivePaths, Dictionary -- Neighbors).
 
@@ -169,7 +175,7 @@ search_neighbors(CurrentPath, Target, Dictionary) ->
       {dead, CurrentPath};
     false ->
       NewPaths = [[H] ++ T|| H <- Neighbors, T <- [CurrentPath]],
-      {notfound, CurrentPath, NewPaths}
+      {notfound, NewPaths}
   end.
 
 
@@ -208,7 +214,7 @@ tests() ->
   % search_neighbors
   {found,["absde","abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["absde", "abbbb", "absdf"]),
   {dead,["abcde","abcdx"]} = search_neighbors(["abcde", "abcdx"], "absde", ["abbbb", "absdf"]),
-  {notfound,["abcde","abcdx"],
+  {notfound,
           [["abdde","abcde","abcdx"],["abqde","abcde","abcdx"]]}= search_neighbors(["abcde", "abcdx"], "absde", ["abqde","abdde", "abbbb", "absdf"]),
 
   % reduce_pathset
