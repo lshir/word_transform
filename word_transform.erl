@@ -1,9 +1,6 @@
 -module(word_transform).
 -author('Shir Levkowitz <shir@lhaim.com>').
-% -export([transform/3, read_dictionary/1, tests/0]).
-
-
--compile(export_all).
+-export([transform/3, read_dictionary/1, tests/0]).
 
 %% A simple concurrent application to transform one word into another of the same length through single-letter substitutions within a dictionary.
 
@@ -51,6 +48,14 @@
 %% For more (internal as well as external) examples see the test/0 function
 
 
+%% TODO
+%%
+%% The following improvements could be made:
+%% 1. Change dictionary to an ETS table, which would make adding/removing words constant time
+%% 2. Change reduce_pathset to use a hash table, which would remove duplicates in linear time
+%%
+
+
 
 %%
 %% EXTERNAL
@@ -86,13 +91,21 @@ read_dictionary(File) ->
 
 %% Receives and formats the output of the threads searching for neighbors
 %% 
-%% Pid
-%% Path - A path, formatted as a list as used everywhere (ordered in diminishing recency)
+%% Ref
 collect(Ref) ->
   receive
     {_Pid, Ref, {found, Match}} -> {match, Match};
     {_Pid, Ref, {dead, _Path}} -> {live, []};
     {_Pid, Ref, {notfound, Neighbors}} -> {live, Neighbors}
+  end.
+
+
+%% Just to clear the message queue after we find a match
+flush() ->
+  receive
+    _ -> flush()
+  after 0 ->
+    ok
   end.
 
 
@@ -104,6 +117,7 @@ collect(Ref) ->
 %% Dictionary - A list of words that may be used.
   % Exit clauses
 search(_Target, Match, _Paths,  _Dictionary) when Match =/= [] -> % found match
+  flush(),
   Match;
 search(_Target, _Match, _Paths,  []) -> % ran out of dictionary to search
   [];
@@ -114,7 +128,7 @@ search(Target, _, Paths, Dictionary) ->
   % Spawn search processes
   Whoami = self(),
   Ref = make_ref(),
-  io:format("Searching paths of length ~p with ref ~p~n", [length(hd(Paths)), Ref]),
+  io:format("Searching paths of length ~p~n", [length(hd(Paths))]),
 
   PathsFiltered = reduce_pathset(Paths),
   PathsSpawned = lists:map(fun(Path) ->
@@ -135,10 +149,8 @@ search(Target, _, Paths, Dictionary) ->
         end
     end, [{match, []}, {live, []}, {neighbors, []}], PathsSpawned),
 
-
-
-
-  search(Target, Match, LivePaths, Dictionary -- Neighbors).
+  NewNeighbors = Dictionary -- Neighbors,
+  search(Target, Match, LivePaths, NewNeighbors).
 
 
 %% Filters down the set of paths to a set with unique heads - at this point we are comparing paths against each other so we cannot 
